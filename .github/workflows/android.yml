@@ -1,86 +1,56 @@
-name: android-ndk-build
+name: android-ndk
 
 on: [push, pull_request, workflow_dispatch]
 
 env:
   BUILD_TYPE: Release
-  ANDROID_NDK_VERSION: 26.1.10909125
-  ANDROID_API_LEVEL: 24
   ANDROID_ABI: arm64-v8a
-  ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
-  ANDROID_NDK_HOME: ${{ github.workspace }}/android-sdk/ndk/26.1.10909125
+  ANDROID_PLATFORM: android-24
 
 jobs:
-  build-android:
+  android-build:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Repository
+    - name: Checkout repository
       uses: actions/checkout@v4
       with:
         submodules: recursive
 
-    - name: Set up JDK
+    - name: Set up JDK 11 (for Gradle or NDK builds if needed)
       uses: actions/setup-java@v3
       with:
         distribution: 'temurin'
-        java-version: '17'
+        java-version: '11'
 
-    - name: Download Android Command Line Tools
+    - name: Set up Android NDK
+      uses: nttld/setup-ndk@v1
+      with:
+        ndk-version: r26d
+        link-to-sdk: true
+
+    - name: Create build directory
+      run: cmake -E make_directory ${{github.workspace}}/build
+
+    - name: Configure CMake (NDK)
+      working-directory: ${{github.workspace}}/build
       run: |
-        mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
-        cd $ANDROID_SDK_ROOT/cmdline-tools
-        curl -O https://dl.google.com/android/repository/commandlinetools-linux-10406996_latest.zip
-        unzip -q commandlinetools-linux-*.zip
-        mv cmdline-tools latest
-        rm commandlinetools-linux-*.zip
-
-    - name: Install Android SDK Components
-      run: |
-        yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_SDK_ROOT --licenses
-        $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_SDK_ROOT \
-          "platforms;android-${ANDROID_API_LEVEL}" \
-          "build-tools;34.0.0" \
-          "ndk;${ANDROID_NDK_VERSION}" \
-          "cmake;3.22.1"
-
-    - name: Export Environment Variables
-      run: |
-        echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
-        echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION" >> $GITHUB_ENV
-        echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> $GITHUB_PATH
-
-    - name: Create Build Directory
-      run: cmake -E make_directory ${{ runner.workspace }}/build-android
-
-    - name: Configure CMake for Android
-      working-directory: ${{ runner.workspace }}/build-android
-      run: |
-        cmake $GITHUB_WORKSPACE \
-          -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
-          -DANDROID_ABI=${ANDROID_ABI} \
-          -DANDROID_PLATFORM=android-${ANDROID_API_LEVEL} \
+        cmake ../src/applications/osgearth_viewer_android \
+          -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
           -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
-          -G Ninja
+          -DANDROID_ABI=$ANDROID_ABI \
+          -DANDROID_PLATFORM=$ANDROID_PLATFORM
 
-    - name: Upload CMake Configuration Log
-      if: failure()
+    - name: Build
+      working-directory: ${{github.workspace}}/build
+      run: cmake --build . --parallel 4
+
+    - name: Upload APK or .so output (if any)
+      if: success()
       uses: actions/upload-artifact@v4
       with:
-        name: cmake-android-configure-log
+        name: android-build-artifacts
         path: |
-          ${{ runner.workspace }}/build-android/CMakeCache.txt
-        retention-days: 1
-
-    - name: Build Android Application
-      working-directory: ${{ runner.workspace }}/build-android
-      run: cmake --build . --parallel 4 --config ${BUILD_TYPE}
-
-    - name: Upload CMake Build Log
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: cmake-android-build-log
-        path: |
-          ${{ runner.workspace }}/build-android/CMakeCache.txt
-        retention-days: 1
+          ${{github.workspace}}/build/**/*.so
+          ${{github.workspace}}/build/**/*.apk
+        retention-days: 7
