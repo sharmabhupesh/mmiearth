@@ -1,4 +1,4 @@
-name: macosx-x64
+name: android-ndk
 
 on: [push, pull_request, workflow_dispatch]
 
@@ -13,23 +13,22 @@ jobs:
 
     strategy:
       matrix:
-        os: ['macos-14']
+        os: ['ubuntu-24.04']
         include:
-          - os: 'macos-14'
-            triplet: 'x64-macosx'
+          - os: 'ubuntu-24.04'
+            triplet: 'x64-linux'
 
     steps:
     - name: Setup environment
       run: |
-        # brew install cmake
-        brew install gdal
-        brew install geos
-        brew install sqlite
-        brew install protobuf
-        brew install poco
-        brew install open-scene-graph
-        brew install glew
-        sudo xcode-select -p
+        sudo apt-get update -qq
+        sudo apt-get install libgl-dev
+        sudo apt-get install -y cmake
+        sudo apt-get install -y libopenscenegraph-dev
+        sudo apt-get install -y libgdal-dev
+        sudo apt-get install -y libgeos-dev
+        sudo apt-get install -y libsqlite3-dev
+        sudo apt-get install -y protobuf-compiler libprotobuf-dev
 
     - uses: actions/checkout@v4
       with:
@@ -37,22 +36,12 @@ jobs:
 
     - name: Create Build Environment
       run: |
-        # patch for opengl warnings
-        macos_xcode_defs="ADD_DEFINITIONS(-DGL_SILENCE_DEPRECATION=1)\nadd_compile_options(-Wno-inconsistent-missing-override)\n"
-        echo -e "${macos_xcode_defs}\n$(cat ${{runner.workspace}}/osgearth/src/CMakeLists.txt)" > ${{runner.workspace}}/osgearth/src/CMakeLists.txt
         cmake -E make_directory ${{runner.workspace}}/build
 
     - name: Configure CMake
       shell: bash
       working-directory: ${{ runner.workspace }}/build
-      run: |
-        cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
-          -DCMAKE_CXX_STANDARD:STRING=17 \
-          -DCMAKE_CXX_STANDARD_REQUIRED:BOOL=ON \
-          -DOSGEARTH_BUILD_LEGACY_SPLAT_NODEKIT=ON \
-          -DOSGEARTH_BUILD_PROCEDURAL_NODEKIT=ON \
-          -DOSGEARTH_BUILD_TESTS=OFF \
-          -GXcode -DVCPKG_MANIFEST_DIR=$GITHUB_WORKSPACE
+      run: cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DOSGEARTH_BUILD_LEGACY_SPLAT_NODEKIT=OFF -DOSGEARTH_BUILD_PROCEDURAL_NODEKIT=ON
 
     - name: 'Upload cmake configure log artifact'
       uses: actions/upload-artifact@v4
@@ -66,7 +55,7 @@ jobs:
     - name: Build
       working-directory: ${{ runner.workspace }}/build
       shell: bash
-      run: cmake --build . --config $BUILD_TYPE
+      run: cmake --build . --parallel 4 --config $BUILD_TYPE
 
     - name: 'Upload cmake build log artifact'
       uses: actions/upload-artifact@v4
