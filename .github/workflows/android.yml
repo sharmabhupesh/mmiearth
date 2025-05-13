@@ -41,6 +41,7 @@ jobs:
           -DANDROID_ABI=$ANDROID_ABI \
           -DANDROID_PLATFORM=$ANDROID_PLATFORM
 
+
     - name: Build
       working-directory: ${{github.workspace}}/build
       run: cmake --build . --parallel 4
