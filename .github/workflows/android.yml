@@ -1,9 +1,6 @@
-name: Build osgEarth Android App
+name: Build Android App with osg-android
 
-on:
-  push:
-  pull_request:
-  workflow_dispatch:
+on: [push, pull_request, workflow_dispatch]
 
 env:
   BUILD_TYPE: Release
@@ -15,81 +12,55 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
 
-      - name: Set up Java
-        uses: actions/setup-java@v3
-        with:
-          java-version: '11'
-          distribution: 'temurin'
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ninja-build cmake build-essential \
+          unzip curl git libglu1-mesa
 
-      - name: Set up Android NDK
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r25b
-          add-to-path: true
+    - name: Set up Android NDK
+      uses: nttld/setup-ndk@v1
+      with:
+        ndk-version: r25c
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y curl unzip cmake make gcc g++
+    - name: Set Environment Vars
+      run: |
+        echo "ANDROID_NDK_HOME=${ANDROID_NDK_HOME}" >> $GITHUB_ENV
+        echo "PATH=$ANDROID_NDK_HOME:$PATH" >> $GITHUB_ENV
 
-      - name: Download Prebuilt osg-android Package
-        run: |
-          mkdir -p $HOME/osg-android
-          curl -L -o osg-android.zip https://example.com/path/to/osg-android.zip
-          unzip osg-android.zip -d $HOME/osg-android
+    - name: Clone osg-android
+      run: |
+        git clone https://github.com/openscenegraph/OpenSceneGraph.git $HOME/osg-android
+        mkdir -p $HOME/osg-android/build
+        cd $HOME/osg-android/build
+        cmake .. \
+          -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+          -DANDROID_ABI=${ANDROID_ABI} \
+          -DANDROID_PLATFORM=${ANDROID_PLATFORM} \
+          -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+          -G Ninja
+        ninja -j4
 
-      - name: Build Application
-        working-directory: ${{ github.workspace }}
-        env:
-          BASE_PATH: $HOME/osg-android
-        run: |
-          mkdir -p build
-          cd build
-          cmake ../src/applications/osgearth_viewer_android \
-            -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
-            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
-            -DANDROID_ABI=$ANDROID_ABI \
-            -DANDROID_PLATFORM=$ANDROID_PLATFORM \
-            -DOSG_DIR:PATH="$BASE_PATH/osg-android" \
-            -DOSG_INCLUDE_DIR:PATH="$BASE_PATH/include" \
-            -DOSG_GEN_INCLUDE_DIR:PATH="$BASE_PATH/build/include" \
-            -DCURL_INCLUDE_DIR:PATH="$BASE_PATH/3rdparty/curl/include" \
-            -DCURL_LIBRARY:PATH="$BASE_PATH/3rdparty/build/curl/obj/local/${ANDROID_ABI}/libcurl.a" \
-            -DGDAL_INCLUDE_DIR:PATH="$BASE_PATH/3rdparty/gdal/include" \
-            -DGDAL_LIBRARY:PATH="$BASE_PATH/3rdparty/build/gdal/obj/local/${ANDROID_ABI}/libgdal.a" \
-            -DGEOS_INCLUDE_DIR:PATH="$BASE_PATH/3rdparty/jni/geos-3.3.4/include" \
-            -DGEOS_LIBRARY:PATH="$BASE_PATH/3rdparty/build/geos/obj/local/${ANDROID_ABI}/libgeos.a" \
-            -DOPENTHREADS_LIBRARY=$BASE_PATH/build/obj/local/${ANDROID_ABI}/libOpenThreads.a \
-            -DOSGDB_LIBRARY=$BASE_PATH/build/obj/local/${ANDROID_ABI}/libosgDB.a \
-            -DOSGFX_LIBRARY=$BASE_PATH/build/obj/local/${ANDROID_ABI}/libosgFX.a \
-            -DOSGGA_LIBRARY=$BASE_PATH/build/obj/local/${ANDROID_ABI}/libosgGA.a \
-            -DOSGMANIPULATOR_LIBRARY=$BASE_PATH/build/obj/local/${ANDROID_ABI}/libosgManipulator.a \
-            -DOSGSHADOW_LIBRARY=$BASE_PATH/build/obj/local/${ANDROID_ABI}/libosgShadow.a \
-            -DOSGSIM_LIBRARY=$BASE_PATH/build/obj/local/${ANDROID_ABI}/libosgSim.a \
-            -DOSGTERRAIN_LIBRARY=$BASE_PATH/build/obj/local/${ANDROID_ABI}/libosgTerrain.a \
-            -DOSGTEXT_LIBRARY=$BASE_PATH/build/obj/local/${ANDROID_ABI}/libosgText.a \
-            -DOSGUTIL_LIBRARY=$BASE_PATH/build/obj/local/${ANDROID_ABI}/libosgUtil.a \
-            -DOSGVIEWER_LIBRARY=$BASE_PATH/build/obj/local/${ANDROID_ABI}/libosgViewer.a \
-            -DOSGWIDGET_LIBRARY=$BASE_PATH/build/obj/local/${ANDROID_ABI}/libosgWidget.a \
-            -DOSG_LIBRARY=$BASE_PATH/build/obj/local/${ANDROID_ABI}/libosg.a \
-            -DOSGEARTH_USE_QT=OFF \
-            -DOSG_BUILD_PLATFORM_ANDROID=ON \
-            -DDYNAMIC_OSGEARTH=OFF
+    - name: Build your osgEarth viewer Android app
+      run: |
+        mkdir -p build && cd build
+        cmake ../src/applications/osgearth_viewer_android \
+          -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+          -DANDROID_ABI=${ANDROID_ABI} \
+          -DANDROID_PLATFORM=${ANDROID_PLATFORM} \
+          -DOSG_DIR=$HOME/osg-android/build \
+          -DOSG_INCLUDE_DIR=$HOME/osg-android/include \
+          -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+          -G Ninja
+        ninja -j4
 
-      - name: Build (make)
-        working-directory: ${{ github.workspace }}/build
-        run: make -j$(nproc)
-
-      - name: Upload APK or libs
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-build-output
-          path: |
-            ${{ github.workspace }}/build/*.so
-            ${{ github.workspace }}/build/*.apk
+    - name: Upload APK or libs (optional)
+      uses: actions/upload-artifact@v4
+      with:
+        name: android-build-artifacts
+        path: build/
