@@ -1,67 +1,86 @@
-name: android-ndk
+name: android-ndk-build
 
 on: [push, pull_request, workflow_dispatch]
 
 env:
-  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
   BUILD_TYPE: Release
+  ANDROID_NDK_VERSION: 26.1.10909125
+  ANDROID_API_LEVEL: 24
+  ANDROID_ABI: arm64-v8a
+  ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
+  ANDROID_NDK_HOME: ${{ github.workspace }}/android-sdk/ndk/26.1.10909125
 
 jobs:
-
-  build:
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      matrix:
-        os: ['ubuntu-24.04']
-        include:
-          - os: 'ubuntu-24.04'
-            triplet: 'x64-linux'
+  android-build:
+    runs-on: ubuntu-latest
 
     steps:
-    - name: Setup environment
-      run: |
-        sudo apt-get update -qq
-        sudo apt-get install libgl-dev
-        sudo apt-get install -y cmake
-        sudo apt-get install -y libopenscenegraph-dev
-        sudo apt-get install -y libgdal-dev
-        sudo apt-get install -y libgeos-dev
-        sudo apt-get install -y libsqlite3-dev
-        sudo apt-get install -y protobuf-compiler libprotobuf-dev
-
-    - uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
       with:
         submodules: recursive
 
-    - name: Create Build Environment
-      run: |
-        cmake -E make_directory ${{runner.workspace}}/build
-
-    - name: Configure CMake
-      shell: bash
-      working-directory: ${{ runner.workspace }}/build
-      run: cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DOSGEARTH_BUILD_LEGACY_SPLAT_NODEKIT=OFF -DOSGEARTH_BUILD_PROCEDURAL_NODEKIT=ON
-
-    - name: 'Upload cmake configure log artifact'
-      uses: actions/upload-artifact@v4
-      if: ${{ failure() }}
+    - name: Set up JDK
+      uses: actions/setup-java@v3
       with:
-        name: cmake-configure-log
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Download Android Command Line Tools
+      run: |
+        mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
+        cd $ANDROID_SDK_ROOT/cmdline-tools
+        curl -O https://dl.google.com/android/repository/commandlinetools-linux-10406996_latest.zip
+        unzip -q commandlinetools-linux-*.zip
+        mv cmdline-tools latest
+        rm commandlinetools-linux-*.zip
+
+    - name: Install Android SDK and NDK
+      run: |
+        yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_SDK_ROOT --licenses
+        $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_SDK_ROOT \
+          "platforms;android-${ANDROID_API_LEVEL}" \
+          "build-tools;34.0.0" \
+          "ndk;${ANDROID_NDK_VERSION}" \
+          "cmake;3.22.1"
+
+    - name: Set up environment variables
+      run: |
+        echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+        echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION" >> $GITHUB_ENV
+        echo "PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH" >> $GITHUB_ENV
+
+    - name: Create build directory
+      run: cmake -E make_directory ${{ runner.workspace }}/build-android
+
+    - name: Configure CMake for Android
+      working-directory: ${{ runner.workspace }}/build-android
+      run: |
+        cmake $GITHUB_WORKSPACE/src/applications/osgearth_viewer_android \
+          -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+          -DANDROID_ABI=${ANDROID_ABI} \
+          -DANDROID_PLATFORM=android-${ANDROID_API_LEVEL} \
+          -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+          -G Ninja
+
+    - name: Upload CMake configuration log
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: cmake-android-configure-log
         path: |
-          ${{ runner.workspace }}/build/CMakeCache.txt
+          ${{ runner.workspace }}/build-android/CMakeCache.txt
         retention-days: 1
 
-    - name: Build
-      working-directory: ${{ runner.workspace }}/build
-      shell: bash
-      run: cmake --build . --parallel 4 --config $BUILD_TYPE
+    - name: Build Android APK
+      working-directory: ${{ runner.workspace }}/build-android
+      run: cmake --build . --parallel 4 --config ${BUILD_TYPE}
 
-    - name: 'Upload cmake build log artifact'
+    - name: Upload CMake build log
+      if: failure()
       uses: actions/upload-artifact@v4
-      if: ${{ failure() }}
       with:
-        name: cmake-build-log
+        name: cmake-android-build-log
         path: |
-          ${{ runner.workspace }}/build/CMakeCache.txt
+          ${{ runner.workspace }}/build-android/CMakeCache.txt
         retention-days: 1
